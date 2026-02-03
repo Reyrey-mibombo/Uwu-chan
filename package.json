@@ -22,3 +22,22 @@
   "author": "",
   "license": "MIT"
 }
+{
+  "name": "staff-application-bot",
+  "version": "1.0.0",
+  "description": "Discord staff application bot with role management",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["discord", "bot", "staff", "application", "roles"],
+  "author": "",
+  "license": "MIT"
+}
