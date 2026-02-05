@@ -5,16 +5,13 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const OWNER_ID = process.env.OWNER_ID;
 
-// Error handling
-process.on('unhandledRejection', error => {
-    console.error('Unhandled promise rejection:', error);
-});
+// ==================== PIC PERMS CONFIG ====================
+const ROLE_NAME = "Pic Perms";
+const STATUS_TRIGGER = "/Asclade";
+const CHECK_INTERVAL = 10000; // 10 seconds
+const roleCache = new Map();
 
-process.on('uncaughtException', error => {
-    console.error('Uncaught exception:', error);
-});
-
-// ==================== ALL 11 STAFF POSITIONS WITH 7 QUESTIONS EACH ====================
+// ==================== STAFF POSITIONS (7 QUESTIONS EACH) ====================
 const STAFF_POSITIONS = {
     "Manager": { 
         limit: 1, 
@@ -177,19 +174,22 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildPresences // NEEDED FOR PIC PERMS
     ]
 });
 
 // Storage
-const userApplications = new Map(); // Active apps: {position, answers, currentQuestion}
-const pendingApplications = new Map(); // Submitted apps
-const logChannels = new Map(); // Log channels
+const userApplications = new Map();
+const pendingApplications = new Map();
+const logChannels = new Map();
 
 // ==================== BOT READY ====================
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} is online!`);
-    console.log(`📋 ${Object.keys(STAFF_POSITIONS).length} staff positions loaded (7 questions each)`);
+    console.log(`📋 Staff Application System Active (7 questions each)`);
+    console.log(`🎯 Pic Perms System Active - Looking for: "${STATUS_TRIGGER}"`);
+    console.log(`👑 Owner ID: ${OWNER_ID}`);
     
     // Register commands
     const commands = [
@@ -218,6 +218,10 @@ client.once('ready', async () => {
             .setDescription('Test bot connection'),
         
         new SlashCommandBuilder()
+            .setName('checkme')
+            .setDescription('Check your Pic Perms status'),
+        
+        new SlashCommandBuilder()
             .setName('help')
             .setDescription('Show help menu'),
         
@@ -238,24 +242,233 @@ client.once('ready', async () => {
         console.error('❌ Command error:', error);
     }
     
+    // Start Pic Perms checker
+    startStatusChecker();
+    
     client.user.setActivity({
-        name: '/apply for staff',
+        name: '/apply for staff | $checkme',
         type: ActivityType.Watching
     });
+});
+
+// ==================== PIC PERMS FUNCTIONS ====================
+function checkUserStatus(member) {
+    if (!member || !member.presence) return false;
+    
+    // Check custom status
+    const customStatus = member.presence.activities.find(a => a.type === 4);
+    if (customStatus && customStatus.state && customStatus.state.includes(STATUS_TRIGGER)) {
+        return true;
+    }
+    
+    // Check other activities
+    for (const activity of member.presence.activities) {
+        if (
+            (activity.name && activity.name.includes(STATUS_TRIGGER)) ||
+            (activity.state && activity.state.includes(STATUS_TRIGGER)) ||
+            (activity.details && activity.details.includes(STATUS_TRIGGER))
+        ) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+async function getPicRole(guild) {
+    if (roleCache.has(guild.id)) {
+        return roleCache.get(guild.id);
+    }
+    
+    const role = guild.roles.cache.find(r => r.name === ROLE_NAME);
+    
+    if (role) {
+        roleCache.set(guild.id, role);
+        console.log(`✅ Found '${ROLE_NAME}' role in ${guild.name}`);
+        return role;
+    }
+    
+    console.log(`❌ Could not find '${ROLE_NAME}' role in ${guild.name}`);
+    return null;
+}
+
+function startStatusChecker() {
+    setInterval(async () => {
+        try {
+            for (const guild of client.guilds.cache.values()) {
+                const picRole = await getPicRole(guild);
+                if (!picRole) continue;
+                
+                await guild.members.fetch();
+                
+                for (const member of guild.members.cache.values()) {
+                    if (member.user.bot) continue;
+                    
+                    const hasTrigger = checkUserStatus(member);
+                    const hasRole = member.roles.cache.has(picRole.id);
+                    
+                    try {
+                        if (hasTrigger && !hasRole) {
+                            await member.roles.add(picRole);
+                            console.log(`🎁 Gave '${ROLE_NAME}' to ${member.user.tag}`);
+                        } else if (!hasTrigger && hasRole) {
+                            await member.roles.remove(picRole);
+                            console.log(`🗑️ Removed '${ROLE_NAME}' from ${member.user.tag}`);
+                        }
+                    } catch (error) {
+                        console.error(`❌ Error with ${member.user.tag}:`, error.message);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error in status checker:', error);
+        }
+    }, CHECK_INTERVAL);
+}
+
+// ==================== MESSAGE COMMANDS (PIC PERMS) ====================
+client.on('messageCreate', async (message) => {
+    if (message.author.bot || !message.content.startsWith('$')) return;
+    
+    const args = message.content.slice(1).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+    
+    if (command === 'test' || command === 'debug') {
+        const member = message.member;
+        const picRole = await getPicRole(message.guild);
+        const hasTrigger = checkUserStatus(member);
+        const hasRole = picRole ? member.roles.cache.has(picRole.id) : false;
+        
+        let response = `**🧪 Pic Perms Test for ${member.user.tag}:**\n`;
+        response += `• Looking for: \`${STATUS_TRIGGER}\`\n`;
+        response += `• Status Detected: ${hasTrigger ? '✅ YES' : '❌ NO'}\n`;
+        response += `• Has Role: ${hasRole ? '✅ YES' : '❌ NO'}\n`;
+        
+        if (member.presence?.activities?.length > 0) {
+            response += `\n**📋 Your Current Status:**\n`;
+            member.presence.activities.forEach((activity, i) => {
+                const typeName = getActivityType(activity.type);
+                response += `${i+1}. **${typeName}:** "${activity.name || 'None'}"`;
+                if (activity.state) response += ` | **Text:** "${activity.state}"`;
+                response += '\n';
+            });
+        }
+        
+        await message.reply(response);
+    }
+    
+    else if (command === 'checkme') {
+        const member = message.member;
+        const picRole = await getPicRole(message.guild);
+        const hasTrigger = checkUserStatus(member);
+        const hasRole = picRole ? member.roles.cache.has(picRole.id) : false;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`🔍 Pic Perms Check for ${member.user.username}`)
+            .setColor(hasTrigger ? 0x00FF00 : 0xFF0000);
+        
+        embed.addFields({
+            name: '✅ Status Check',
+            value: `Looking for \`${STATUS_TRIGGER}\`: **${hasTrigger ? 'FOUND!' : 'NOT FOUND'}**`,
+            inline: false
+        });
+        
+        embed.addFields({
+            name: '👑 Role Status',
+            value: `\`${ROLE_NAME}\` role: **${hasRole ? 'HAS IT!' : 'DOES NOT HAVE'}**`,
+            inline: false
+        });
+        
+        if (!hasTrigger) {
+            embed.addFields({
+                name: '🚀 How to get the role:',
+                value: `1. Click your profile picture\n2. Select "Set Custom Status"\n3. Type: \`${STATUS_TRIGGER}\`\n4. Click "Save"\n⏱️ Role will appear in **10 seconds**`,
+                inline: false
+            });
+        } else if (!hasRole) {
+            embed.addFields({
+                name: '⏳ Almost there!',
+                value: `✅ You have the status!\n⏱️ Role should appear in **10 seconds**`,
+                inline: false
+            });
+        } else {
+            embed.addFields({
+                name: '🎉 Perfect!',
+                value: `✅ You have both the status and role!`,
+                inline: false
+            });
+        }
+        
+        await message.reply({ embeds: [embed] });
+    }
+    
+    else if (command === 'help') {
+        const embed = new EmbedBuilder()
+            .setTitle('🤖 Bot Help Menu')
+            .setDescription(`**Two Systems Active:**\n1. Pic Perms: Put \`${STATUS_TRIGGER}\` in status\n2. Staff Applications: 7 questions per position`)
+            .setColor(0x0099FF);
+        
+        embed.addFields(
+            { name: '**🎯 Pic Perms Commands**', value: 'Prefix: `$`', inline: false },
+            { name: '`$test`', value: 'Check status detection', inline: true },
+            { name: '`$checkme`', value: 'Check your status & role', inline: true },
+            { name: '`$help`', value: 'Show this menu', inline: true }
+        );
+        
+        embed.addFields(
+            { name: '**📋 Staff Application Commands**', value: 'Slash commands:', inline: false },
+            { name: '`/apply`', value: 'Start staff application', inline: true },
+            { name: '`/positions`', value: 'View all positions', inline: true },
+            { name: '`/checkme`', value: 'Check Pic Perms status', inline: true }
+        );
+        
+        await message.reply({ embeds: [embed] });
+    }
+});
+
+function getActivityType(type) {
+    const types = {
+        0: 'Playing',
+        1: 'Streaming',
+        2: 'Listening',
+        3: 'Watching',
+        4: 'Custom Status'
+    };
+    return types[type] || `Type ${type}`;
+}
+
+// ==================== INSTANT STATUS UPDATE ====================
+client.on('presenceUpdate', async (oldPresence, newPresence) => {
+    if (!newPresence || !newPresence.member || newPresence.member.user.bot) return;
+    
+    const picRole = await getPicRole(newPresence.member.guild);
+    if (!picRole) return;
+    
+    const hasTrigger = checkUserStatus(newPresence.member);
+    const hasRole = newPresence.member.roles.cache.has(picRole.id);
+    
+    try {
+        if (hasTrigger && !hasRole) {
+            await newPresence.member.roles.add(picRole);
+            console.log(`⚡ Gave role to ${newPresence.member.user.tag} (instant)`);
+        } else if (!hasTrigger && hasRole) {
+            await newPresence.member.roles.remove(picRole);
+            console.log(`⚡ Removed role from ${newPresence.member.user.tag} (instant)`);
+        }
+    } catch (error) {
+        console.error(`Instant update error: ${error.message}`);
+    }
 });
 
 // ==================== SLASH COMMAND HANDLER ====================
 client.on('interactionCreate', async (interaction) => {
     try {
-        // COMMANDS
         if (interaction.isCommand()) {
             await handleCommand(interaction);
         }
-        // BUTTONS
         else if (interaction.isButton()) {
             await handleButton(interaction);
         }
-        // MODALS
         else if (interaction.isModalSubmit()) {
             await handleModal(interaction);
         }
@@ -312,23 +525,57 @@ async function handleCommand(interaction) {
     }
     else if (interaction.commandName === 'test') {
         await interaction.reply({ 
-            content: '✅ Bot is working! Use `/apply` to start application.', 
+            content: '✅ Bot is working! Use `/apply` or `$checkme`.', 
             ephemeral: true 
         });
     }
+    else if (interaction.commandName === 'checkme') {
+        const member = interaction.member;
+        const picRole = await getPicRole(interaction.guild);
+        const hasTrigger = checkUserStatus(member);
+        const hasRole = picRole ? member.roles.cache.has(picRole.id) : false;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`🔍 Pic Perms Check for ${member.user.username}`)
+            .setColor(hasTrigger ? 0x00FF00 : 0xFF0000);
+        
+        embed.addFields({
+            name: '✅ Status Check',
+            value: `Looking for \`${STATUS_TRIGGER}\`: **${hasTrigger ? 'FOUND!' : 'NOT FOUND'}**`,
+            inline: false
+        });
+        
+        embed.addFields({
+            name: '👑 Role Status',
+            value: `\`${ROLE_NAME}\` role: **${hasRole ? 'HAS IT!' : 'DOES NOT HAVE'}**`,
+            inline: false
+        });
+        
+        if (!hasTrigger) {
+            embed.addFields({
+                name: '🚀 How to get the role:',
+                value: `Set your status to include: \`${STATUS_TRIGGER}\``,
+                inline: false
+            });
+        }
+        
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
     else if (interaction.commandName === 'help') {
         const embed = new EmbedBuilder()
-            .setTitle('🤖 Help Menu')
-            .setDescription('**Staff Application Bot**\n7 questions for each position')
+            .setTitle('🤖 Bot Help Menu')
+            .setDescription(`**Two Systems:**\n1. Pic Perms: Put \`${STATUS_TRIGGER}\` in status\n2. Staff Apps: 7 questions each`)
             .addFields(
-                { name: '/apply', value: 'Start staff application', inline: true },
-                { name: '/positions', value: 'View all positions', inline: true },
-                { name: '/test', value: 'Test bot connection', inline: true },
-                { name: '/logging', value: 'Set log channel (Owner)', inline: true },
-                { name: '/applications', value: 'View pending apps (Owner)', inline: true },
-                { name: '/setup', value: 'Setup apply button (Owner)', inline: true }
+                { name: '**🎯 Pic Perms Commands**', value: 'Prefix: `$`', inline: false },
+                { name: '`$test`', value: 'Check status', inline: true },
+                { name: '`$checkme`', value: 'Check your role', inline: true },
+                { name: '**📋 Staff Commands**', value: 'Slash commands:', inline: false },
+                { name: '`/apply`', value: 'Start application', inline: true },
+                { name: '`/positions`', value: 'View positions', inline: true },
+                { name: '`/checkme`', value: 'Pic Perms check', inline: true }
             )
             .setColor(0x0099FF);
+        
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
     else if (interaction.commandName === 'setup') {
@@ -338,11 +585,11 @@ async function handleCommand(interaction) {
         const channel = interaction.options.getChannel('channel');
         const embed = new EmbedBuilder()
             .setTitle('📝 Staff Applications')
-            .setDescription('Click the button below to apply for staff!')
+            .setDescription('Click below to apply for staff!')
             .setColor(0x0099FF)
             .addFields(
                 { name: '📋 Process', value: '1. Choose position\n2. Answer 7 questions\n3. Submit application', inline: false },
-                { name: '⏱️ Review', value: 'Owner reviews within 48h', inline: true }
+                { name: '🎯 Pic Perms', value: `Put \`${STATUS_TRIGGER}\` in status`, inline: true }
             );
         const button = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -399,7 +646,7 @@ async function handleModal(interaction) {
         // Store answer
         appData.answers[qIndex] = answer;
         const nextIndex = parseInt(qIndex) + 1;
-        const totalQuestions = STAFF_POSITIONS[position].questions.length;
+        const totalQuestions = 7; // Always 7 questions
         
         if (nextIndex < totalQuestions) {
             // Show next question
@@ -411,7 +658,7 @@ async function handleModal(interaction) {
     }
 }
 
-// ==================== POSITION SELECTION ====================
+// ==================== APPLICATION FUNCTIONS ====================
 async function showPositionSelection(interaction) {
     const embed = new EmbedBuilder()
         .setTitle('👥 Select Staff Position')
@@ -460,7 +707,6 @@ async function showPositionSelection(interaction) {
     }
 }
 
-// ==================== SHOW ALL POSITIONS ====================
 async function showAllPositions(interaction) {
     const embed = new EmbedBuilder()
         .setTitle('👥 All Staff Positions')
@@ -484,7 +730,6 @@ async function showAllPositions(interaction) {
     });
 }
 
-// ==================== START APPLICATION ====================
 async function startApplication(interaction, position) {
     const data = STAFF_POSITIONS[position];
     
@@ -506,32 +751,18 @@ async function startApplication(interaction, position) {
         });
     }
     
-    // Check if user already has staff role
-    const hasStaffRole = interaction.member.roles.cache.some(role => 
-        Object.keys(STAFF_POSITIONS).some(pos => role.name === pos)
-    );
-    
-    if (hasStaffRole) {
-        return interaction.reply({ 
-            content: '❌ You already have a staff role!', 
-            ephemeral: true 
-        });
-    }
-    
     // Initialize application with 7 questions
     const key = `${interaction.user.id}_${interaction.guild.id}`;
     userApplications.set(key, {
         position: position,
         answers: new Array(7).fill(''), // 7 questions
-        currentQuestion: 0,
-        startTime: Date.now()
+        currentQuestion: 0
     });
     
     // Show first question
     await showQuestion(interaction, position, 0);
 }
 
-// ==================== SHOW QUESTION (MODAL) ====================
 async function showQuestion(interaction, position, questionIndex) {
     const data = STAFF_POSITIONS[position];
     const question = data.questions[questionIndex];
@@ -554,7 +785,6 @@ async function showQuestion(interaction, position, questionIndex) {
     await interaction.showModal(modal);
 }
 
-// ==================== SHOW SUMMARY ====================
 async function showSummary(interaction, position) {
     const key = `${interaction.user.id}_${interaction.guild.id}`;
     const appData = userApplications.get(key);
@@ -566,7 +796,7 @@ async function showSummary(interaction, position) {
         .setColor(data.color)
         .setFooter({ text: 'Review your answers before submitting' });
     
-    // Show preview of first 3 answers
+    // Show preview
     for (let i = 0; i < Math.min(3, appData.answers.length); i++) {
         if (appData.answers[i]) {
             const preview = appData.answers[i].length > 100 
@@ -601,7 +831,6 @@ async function showSummary(interaction, position) {
     });
 }
 
-// ==================== SUBMIT APPLICATION ====================
 async function submitApplication(interaction) {
     const key = `${interaction.user.id}_${interaction.guild.id}`;
     const appData = userApplications.get(key);
@@ -654,7 +883,6 @@ async function submitApplication(interaction) {
     await sendToLog(interaction, application);
 }
 
-// ==================== SEND TO LOG CHANNEL ====================
 async function sendToLog(interaction, application) {
     const logChannelId = logChannels.get(interaction.guild.id);
     if (!logChannelId) {
