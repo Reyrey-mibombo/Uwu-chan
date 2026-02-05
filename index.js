@@ -1,4 +1,18 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActivityType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    ActivityType, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder 
+} = require('discord.js');
 require('dotenv').config();
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -175,7 +189,7 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildPresences // NEEDED FOR PIC PERMS
+        GatewayIntentBits.GuildPresences
     ]
 });
 
