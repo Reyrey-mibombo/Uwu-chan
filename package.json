@@ -1,15 +1,15 @@
 {
   "name": "pic-perms-bot",
   "version": "1.0.0",
-  "description": "Discord bot that gives Pic Perms role based on user status and handles staff applications",
+  "description": "Discord bot with healthcheck",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "dotenv": "^16.4.1"
+    "dotenv": "^16.4.1",
+    "express": "^4.18.2"
   },
   "engines": {
     "node": ">=18.0.0"
