@@ -1,35 +1,11 @@
 {
   "name": "pic-perms-bot",
   "version": "1.0.0",
-  "description": "Discord bot that gives Pic Perms role based on user status",
+  "description": "Discord bot that gives Pic Perms role based on user status and handles staff applications",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "dotenv": "^16.4.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "keywords": [
-    "discord",
-    "bot",
-    "automation",
-    "roles"
-  ],
-  "author": "",
-  "license": "MIT"
-}
-
-{
-  "name": "staff-application-bot",
-  "version": "1.0.0",
-  "description": "Discord staff application bot",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
