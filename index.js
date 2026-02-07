@@ -216,6 +216,15 @@ const userApplications = new Map();
 const pendingApplications = new Map();
 const logChannels = new Map();
 
+// ==================== ERROR HANDLING ====================
+process.on('unhandledRejection', (error) => {
+    console.error('⚠️ Unhandled Promise Rejection:', error);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('⚠️ Uncaught Exception:', error);
+});
+
 // ==================== BOT READY ====================
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} is online!`);
@@ -262,14 +271,39 @@ client.once('ready', async () => {
         
         new SlashCommandBuilder()
             .setName('view_apps')
-            .setDescription('View pending applications (Owner only)')
+            .setDescription('View pending applications (Owner only)'),
+        
+        new SlashCommandBuilder()
+            .setName('debug_app')
+            .setDescription('Debug your application status'),
+        
+        new SlashCommandBuilder()
+            .setName('clear_app')
+            .setDescription('Clear your application data and start over')
     ];
     
     try {
         const rest = new REST({ version: '10' }).setToken(TOKEN);
+        
+        console.log('🔄 Refreshing slash commands...');
+        
+        // Clear old commands first
+        try {
+            await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [] });
+            console.log('🗑️ Cleared old commands');
+        } catch (clearError) {
+            console.log('⚠️ Could not clear old commands:', clearError.message);
+        }
+        
+        // Wait a moment
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Register new commands
         await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Slash commands registered!');
+        
+        console.log('✅ Slash commands registered successfully!');
         console.log('📋 Commands:', commands.map(c => `/${c.name}`).join(', '));
+        
     } catch (error) {
         console.error('❌ Command error:', error);
     }
@@ -284,6 +318,9 @@ client.once('ready', async () => {
         }],
         status: 'online'
     });
+    
+    console.log('✅ Bot fully initialized and ready!');
+    console.log(`📊 Bot is in ${client.guilds.cache.size} servers`);
 });
 
 // ==================== PIC PERMS FUNCTIONS ====================
@@ -319,7 +356,6 @@ async function getPicRole(guild) {
     
     if (role) {
         roleCache.set(guild.id, role);
-        console.log(`✅ Found '${ROLE_NAME}' role in ${guild.name}`);
         return role;
     }
     
@@ -345,13 +381,13 @@ function startStatusChecker() {
                     try {
                         if (hasTrigger && !hasRole) {
                             await member.roles.add(picRole);
-                            console.log(`🎁 Gave '${ROLE_NAME}' to ${member.user.tag}`);
+                            console.log(`✅ Gave '${ROLE_NAME}' to ${member.user.tag}`);
                         } else if (!hasTrigger && hasRole) {
                             await member.roles.remove(picRole);
-                            console.log(`🗑️ Removed '${ROLE_NAME}' from ${member.user.tag}`);
+                            console.log(`❌ Removed '${ROLE_NAME}' from ${member.user.tag}`);
                         }
                     } catch (error) {
-                        console.error(`❌ Error with ${member.user.tag}:`, error.message);
+                        console.error(`⚠️ Error with ${member.user.tag}:`, error.message);
                     }
                 }
             }
@@ -360,6 +396,29 @@ function startStatusChecker() {
         }
     }, CHECK_INTERVAL);
 }
+
+// ==================== PRESENCE UPDATE FOR INSTANT ROLE ====================
+client.on('presenceUpdate', async (oldPresence, newPresence) => {
+    if (!newPresence || !newPresence.member || newPresence.member.user.bot) return;
+    
+    try {
+        const picRole = await getPicRole(newPresence.member.guild);
+        if (!picRole) return;
+        
+        const hasTrigger = checkUserStatus(newPresence.member);
+        const hasRole = newPresence.member.roles.cache.has(picRole.id);
+        
+        if (hasTrigger && !hasRole) {
+            await newPresence.member.roles.add(picRole);
+            console.log(`⚡ Instantly gave role to ${newPresence.member.user.tag}`);
+        } else if (!hasTrigger && hasRole) {
+            await newPresence.member.roles.remove(picRole);
+            console.log(`⚡ Instantly removed role from ${newPresence.member.user.tag}`);
+        }
+    } catch (error) {
+        console.error('Instant update error:', error.message);
+    }
+});
 
 // ==================== SLASH COMMAND HANDLER ====================
 client.on('interactionCreate', async (interaction) => {
@@ -374,7 +433,7 @@ client.on('interactionCreate', async (interaction) => {
             await handleModal(interaction);
         }
     } catch (error) {
-        console.error('Interaction error:', error);
+        console.error('❌ Interaction error:', error);
         if (!interaction.replied && !interaction.deferred) {
             await interaction.reply({ 
                 content: '❌ Error occurred. Try again.', 
@@ -385,6 +444,8 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 async function handleCommand(interaction) {
+    console.log(`🔄 Command: /${interaction.commandName} by ${interaction.user.tag}`);
+    
     if (interaction.commandName === 'apply') {
         await showPositionSelection(interaction);
     }
@@ -425,8 +486,9 @@ async function handleCommand(interaction) {
         await interaction.reply({ embeds: [embed], ephemeral: true });
     }
     else if (interaction.commandName === 'test') {
+        const ping = client.ws.ping;
         await interaction.reply({ 
-            content: '✅ Bot is working! Use `/apply` to start staff application.', 
+            content: `✅ **Bot is working!**\n\n**Bot:** ${client.user.tag}\n**Ping:** ${ping}ms\n**Servers:** ${client.guilds.cache.size}\n**Status:** ✅ Online`, 
             ephemeral: false 
         });
     }
@@ -455,7 +517,7 @@ async function handleCommand(interaction) {
         if (!hasTrigger) {
             embed.addFields({
                 name: '🚀 How to get the role:',
-                value: `Set your status to include: \`${STATUS_TRIGGER}\``,
+                value: `Set your Discord status to include: \`${STATUS_TRIGGER}\`\n\n1. Click your profile picture\n2. Select "Set Custom Status"\n3. Type: \`${STATUS_TRIGGER}\`\n4. Click "Save"\n⏱️ Role will appear in **10 seconds**`,
                 inline: false
             });
         }
@@ -479,6 +541,11 @@ async function handleCommand(interaction) {
                 { name: '`/setup_apply`', value: 'Setup apply button', inline: true },
                 { name: '`/set_logs`', value: 'Set log channel', inline: true },
                 { name: '`/view_apps`', value: 'View applications', inline: true }
+            )
+            .addFields(
+                { name: '**🔧 Debug Commands**', value: '━━━━━━━━━━━━━━━━', inline: false },
+                { name: '`/debug_app`', value: 'Debug your application', inline: true },
+                { name: '`/clear_app`', value: 'Clear application data', inline: true }
             )
             .setColor(0x0099FF);
         
@@ -511,327 +578,456 @@ async function handleCommand(interaction) {
             ephemeral: true 
         });
     }
-}
-
-async function handleButton(interaction) {
-    if (interaction.customId === 'start_application') {
-        await showPositionSelection(interaction);
+    else if (interaction.commandName === 'debug_app') {
+        const key = `${interaction.user.id}_${interaction.guild.id}`;
+        const appData = userApplications.get(key);
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🔧 Application Debug')
+            .setColor(0xFFA500)
+            .addFields(
+                { name: 'User', value: interaction.user.tag, inline: true },
+                { name: 'Has App Data', value: appData ? '✅ Yes' : '❌ No', inline: true },
+                { name: 'Pending Apps', value: `${pendingApplications.get(interaction.guild.id)?.length || 0} total`, inline: true }
+            );
+        
+        if (appData) {
+            embed.addFields(
+                { name: 'Position', value: appData.position, inline: true },
+                { name: 'Answers', value: `${appData.answers.filter(a => a && a.trim()).length}/7`, inline: true }
+            );
+        }
+        
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
-    else if (interaction.customId.startsWith('select_')) {
-        const position = interaction.customId.replace('select_', '');
-        await startApplication(interaction, position);
-    }
-    else if (interaction.customId === 'submit_application') {
-        await submitApplication(interaction);
-    }
-    else if (interaction.customId === 'cancel_application') {
+    else if (interaction.commandName === 'clear_app') {
         const key = `${interaction.user.id}_${interaction.guild.id}`;
         userApplications.delete(key);
-        await interaction.update({ 
-            content: '❌ Application cancelled.', 
-            embeds: [], 
-            components: [] 
+        await interaction.reply({ 
+            content: '✅ Cleared your application data. Use `/apply` to start fresh.', 
+            ephemeral: true 
         });
     }
 }
 
-async function handleModal(interaction) {
-    if (interaction.customId.startsWith('question_')) {
-        const [_, position, qIndex] = interaction.customId.split('_');
-        const answer = interaction.fields.getTextInputValue('answer');
-        
-        const key = `${interaction.user.id}_${interaction.guild.id}`;
-        const appData = userApplications.get(key);
-        
-        if (!appData) {
-            return interaction.reply({ 
-                content: '❌ Application expired. Use `/apply` again.', 
-                ephemeral: true 
+async function handleButton(interaction) {
+    console.log(`🔄 Button clicked: ${interaction.customId} by ${interaction.user.tag}`);
+    
+    try {
+        if (interaction.customId === 'start_application') {
+            await showPositionSelection(interaction);
+        }
+        else if (interaction.customId.startsWith('select_')) {
+            const position = interaction.customId.replace('select_', '');
+            console.log(`📝 Starting application for: ${position}`);
+            await startApplication(interaction, position);
+        }
+        else if (interaction.customId === 'submit_application') {
+            console.log(`📤 Submitting application...`);
+            await submitApplication(interaction);
+        }
+        else if (interaction.customId === 'cancel_application') {
+            const key = `${interaction.user.id}_${interaction.guild.id}`;
+            userApplications.delete(key);
+            await interaction.update({ 
+                content: '❌ Application cancelled.', 
+                embeds: [], 
+                components: [] 
             });
         }
-        
-        // Store answer
-        appData.answers[qIndex] = answer;
-        const nextIndex = parseInt(qIndex) + 1;
-        const totalQuestions = 7;
-        
-        if (nextIndex < totalQuestions) {
-            // Show next question
-            await showQuestion(interaction, position, nextIndex);
+    } catch (error) {
+        console.error('❌ Button handler error:', error);
+        if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ 
+                content: '❌ Error processing button. Try using `/apply` again.', 
+                ephemeral: true 
+            });
         } else {
-            // All 7 questions answered
-            await showSummary(interaction, position);
+            await interaction.editReply({ 
+                content: '❌ Error processing button. Try using `/apply` again.', 
+                embeds: [], 
+                components: [] 
+            });
         }
+    }
+}
+
+async function handleModal(interaction) {
+    console.log(`📝 Modal submitted: ${interaction.customId} by ${interaction.user.tag}`);
+    
+    try {
+        if (interaction.customId.startsWith('question_')) {
+            const [_, position, qIndex] = interaction.customId.split('_');
+            const answer = interaction.fields.getTextInputValue('answer');
+            
+            const key = `${interaction.user.id}_${interaction.guild.id}`;
+            const appData = userApplications.get(key);
+            
+            if (!appData) {
+                return interaction.reply({ 
+                    content: '❌ Application session expired. Please use `/apply` to start again.', 
+                    ephemeral: true 
+                });
+            }
+            
+            // Store answer
+            appData.answers[parseInt(qIndex)] = answer;
+            const nextIndex = parseInt(qIndex) + 1;
+            const totalQuestions = 7;
+            
+            if (nextIndex < totalQuestions) {
+                // Show next question
+                await showQuestion(interaction, position, nextIndex);
+            } else {
+                // All 7 questions answered
+                await showSummary(interaction, position);
+            }
+        }
+    } catch (error) {
+        console.error('❌ Modal handler error:', error);
+        await interaction.reply({ 
+            content: '❌ Error processing your answer. Please try `/apply` again.', 
+            ephemeral: true 
+        });
     }
 }
 
 // ==================== APPLICATION FUNCTIONS ====================
 async function showPositionSelection(interaction) {
-    const embed = new EmbedBuilder()
-        .setTitle('👥 Select Staff Position')
-        .setDescription('Choose a position to apply for:\n*Each position has 7 questions*')
-        .setColor(0x0099FF);
-    
-    const rows = [];
-    let currentRow = new ActionRowBuilder();
-    let count = 0;
-    
-    Object.entries(STAFF_POSITIONS).forEach(([position, data]) => {
-        const current = getSlotCount(interaction.guild, position);
-        const isFull = current >= data.limit;
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('👥 Select Staff Position')
+            .setDescription('Choose a position to apply for:\n*Each position has 7 questions*')
+            .setColor(0x0099FF);
         
-        const button = new ButtonBuilder()
-            .setCustomId(`select_${position}`)
-            .setLabel(`${position} (${current}/${data.limit})`)
-            .setStyle(isFull ? ButtonStyle.Danger : ButtonStyle.Primary)
-            .setEmoji(data.emoji)
-            .setDisabled(isFull);
+        const rows = [];
+        let currentRow = new ActionRowBuilder();
+        let count = 0;
         
-        currentRow.addComponents(button);
-        count++;
-        
-        if (count % 5 === 0) {
-            rows.push(currentRow);
-            currentRow = new ActionRowBuilder();
-        }
-    });
-    
-    if (currentRow.components.length > 0) {
-        rows.push(currentRow);
-    }
-    
-    if (interaction.replied || interaction.deferred) {
-        await interaction.editReply({ 
-            embeds: [embed], 
-            components: rows 
+        Object.entries(STAFF_POSITIONS).forEach(([position, data]) => {
+            const current = getSlotCount(interaction.guild, position);
+            const isFull = current >= data.limit;
+            
+            const button = new ButtonBuilder()
+                .setCustomId(`select_${position}`)
+                .setLabel(`${position} (${current}/${data.limit})`)
+                .setStyle(isFull ? ButtonStyle.Danger : ButtonStyle.Primary)
+                .setEmoji(data.emoji)
+                .setDisabled(isFull);
+            
+            currentRow.addComponents(button);
+            count++;
+            
+            if (count % 5 === 0) {
+                rows.push(currentRow);
+                currentRow = new ActionRowBuilder();
+            }
         });
-    } else {
+        
+        if (currentRow.components.length > 0) {
+            rows.push(currentRow);
+        }
+        
         await interaction.reply({ 
             embeds: [embed], 
             components: rows,
+            ephemeral: true 
+        });
+    } catch (error) {
+        console.error('❌ Error showing positions:', error);
+        await interaction.reply({ 
+            content: '❌ Error loading positions. Please try again.', 
             ephemeral: true 
         });
     }
 }
 
 async function showAllPositions(interaction) {
-    const embed = new EmbedBuilder()
-        .setTitle('👥 All Staff Positions')
-        .setDescription('**11 positions available (7 questions each):**')
-        .setColor(0x0099FF);
-    
-    Object.entries(STAFF_POSITIONS).forEach(([position, data]) => {
-        const current = getSlotCount(interaction.guild, position);
-        const status = current >= data.limit ? '❌ FULL' : '✅ OPEN';
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('👥 All Staff Positions')
+            .setDescription('**11 positions available (7 questions each):**')
+            .setColor(0x0099FF);
         
-        embed.addFields({
-            name: `${data.emoji} ${position}`,
-            value: `**Slots:** ${current}/${data.limit}\n**Status:** ${status}\n**Questions:** 7`,
-            inline: true
+        Object.entries(STAFF_POSITIONS).forEach(([position, data]) => {
+            const current = getSlotCount(interaction.guild, position);
+            const status = current >= data.limit ? '❌ FULL' : '✅ OPEN';
+            
+            embed.addFields({
+                name: `${data.emoji} ${position}`,
+                value: `**Slots:** ${current}/${data.limit}\n**Status:** ${status}\n**Questions:** 7`,
+                inline: true
+            });
         });
-    });
-    
-    await interaction.reply({ 
-        embeds: [embed], 
-        ephemeral: false 
-    });
+        
+        await interaction.reply({ 
+            embeds: [embed], 
+            ephemeral: false 
+        });
+    } catch (error) {
+        console.error('❌ Error showing all positions:', error);
+        await interaction.reply({ 
+            content: '❌ Error loading positions. Please try again.', 
+            ephemeral: true 
+        });
+    }
 }
 
 async function startApplication(interaction, position) {
-    const data = STAFF_POSITIONS[position];
-    
-    // Check if position is full
-    const current = getSlotCount(interaction.guild, position);
-    if (current >= data.limit) {
-        return interaction.reply({ 
-            content: `❌ ${position} is full (${current}/${data.limit})!`, 
+    try {
+        const data = STAFF_POSITIONS[position];
+        
+        // Check if position is full
+        const current = getSlotCount(interaction.guild, position);
+        if (current >= data.limit) {
+            return interaction.reply({ 
+                content: `❌ ${position} is full (${current}/${data.limit})!`, 
+                ephemeral: true 
+            });
+        }
+        
+        // Check if user already has pending application
+        const pendingApps = pendingApplications.get(interaction.guild.id) || [];
+        if (pendingApps.some(app => app.userId === interaction.user.id)) {
+            return interaction.reply({ 
+                content: '❌ You already have a pending application!', 
+                ephemeral: true 
+            });
+        }
+        
+        // Initialize application with 7 questions
+        const key = `${interaction.user.id}_${interaction.guild.id}`;
+        userApplications.set(key, {
+            position: position,
+            answers: new Array(7).fill(''),
+            currentQuestion: 0
+        });
+        
+        // Show first question
+        await showQuestion(interaction, position, 0);
+    } catch (error) {
+        console.error('❌ Error starting application:', error);
+        await interaction.reply({ 
+            content: '❌ Error starting application. Please try again.', 
             ephemeral: true 
         });
     }
-    
-    // Check if user already has pending application
-    const pendingApps = pendingApplications.get(interaction.guild.id) || [];
-    if (pendingApps.some(app => app.userId === interaction.user.id)) {
-        return interaction.reply({ 
-            content: '❌ You already have a pending application!', 
-            ephemeral: true 
-        });
-    }
-    
-    // Initialize application with 7 questions
-    const key = `${interaction.user.id}_${interaction.guild.id}`;
-    userApplications.set(key, {
-        position: position,
-        answers: new Array(7).fill(''),
-        currentQuestion: 0
-    });
-    
-    // Show first question
-    await showQuestion(interaction, position, 0);
 }
 
 async function showQuestion(interaction, position, questionIndex) {
-    const data = STAFF_POSITIONS[position];
-    const question = data.questions[questionIndex];
-    
-    const modal = new ModalBuilder()
-        .setCustomId(`question_${position}_${questionIndex}`)
-        .setTitle(`${position} - Question ${questionIndex + 1}/7`);
-    
-    const input = new TextInputBuilder()
-        .setCustomId('answer')
-        .setLabel(`Question ${questionIndex + 1}/7`)
-        .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder(question)
-        .setRequired(true)
-        .setMinLength(10)
-        .setMaxLength(2000);
-    
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-    
-    await interaction.showModal(modal);
+    try {
+        const data = STAFF_POSITIONS[position];
+        const question = data.questions[questionIndex];
+        
+        const modal = new ModalBuilder()
+            .setCustomId(`question_${position}_${questionIndex}`)
+            .setTitle(`${position} - Question ${questionIndex + 1}/7`);
+        
+        const input = new TextInputBuilder()
+            .setCustomId('answer')
+            .setLabel(`Question ${questionIndex + 1}/7`)
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder(question)
+            .setRequired(true)
+            .setMinLength(10)
+            .setMaxLength(2000);
+        
+        modal.addComponents(new ActionRowBuilder().addComponents(input));
+        
+        await interaction.showModal(modal);
+    } catch (error) {
+        console.error('❌ Error showing question:', error);
+        await interaction.reply({ 
+            content: '❌ Error loading question. Please try `/apply` again.', 
+            ephemeral: true 
+        });
+    }
 }
 
 async function showSummary(interaction, position) {
-    const key = `${interaction.user.id}_${interaction.guild.id}`;
-    const appData = userApplications.get(key);
-    const data = STAFF_POSITIONS[position];
+    try {
+        const key = `${interaction.user.id}_${interaction.guild.id}`;
+        const appData = userApplications.get(key);
+        const data = STAFF_POSITIONS[position];
+        
+        if (!appData) {
+            return interaction.reply({ 
+                content: '❌ Application data lost. Please use `/apply` again.', 
+                ephemeral: true 
+            });
+        }
+        
+        const answeredCount = appData.answers.filter(a => a && a.trim()).length;
+        
+        const embed = new EmbedBuilder()
+            .setTitle('📋 Application Summary')
+            .setDescription(`**Position:** ${position}\n**Questions Answered:** ${answeredCount}/7`)
+            .setColor(data.color)
+            .setFooter({ text: 'Review your answers before submitting' });
+        
+        // Show preview of answers
+        for (let i = 0; i < Math.min(3, appData.answers.length); i++) {
+            if (appData.answers[i]) {
+                const preview = appData.answers[i].length > 100 
+                    ? appData.answers[i].substring(0, 100) + '...' 
+                    : appData.answers[i];
+                embed.addFields({
+                    name: `Q${i + 1} Preview`,
+                    value: preview,
+                    inline: false
+                });
+            }
+        }
+        
+        const buttons = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('submit_application')
+                .setLabel('Submit Application')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅'),
+            new ButtonBuilder()
+                .setCustomId('cancel_application')
+                .setLabel('Cancel')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('❌')
+        );
+        
+        await interaction.reply({ 
+            content: answeredCount === 7 ? '✅ All 7 questions completed!' : '⚠️ Some questions may be incomplete!',
+            embeds: [embed], 
+            components: [buttons],
+            ephemeral: true 
+        });
+    } catch (error) {
+        console.error('❌ Error showing summary:', error);
+        await interaction.reply({ 
+            content: '❌ Error showing summary. Please try `/apply` again.', 
+            ephemeral: true 
+        });
+    }
+}
+
+async function submitApplication(interaction) {
+    console.log(`📤 Submitting application for ${interaction.user.tag}`);
     
-    const embed = new EmbedBuilder()
-        .setTitle('📋 Application Summary')
-        .setDescription(`**Position:** ${position}\n**Questions Answered:** 7/7`)
-        .setColor(data.color)
-        .setFooter({ text: 'Review your answers before submitting' });
-    
-    // Show preview
-    for (let i = 0; i < Math.min(3, appData.answers.length); i++) {
-        if (appData.answers[i]) {
-            const preview = appData.answers[i].length > 100 
-                ? appData.answers[i].substring(0, 100) + '...' 
-                : appData.answers[i];
+    try {
+        const key = `${interaction.user.id}_${interaction.guild.id}`;
+        const appData = userApplications.get(key);
+        
+        if (!appData) {
+            return interaction.reply({ 
+                content: '❌ Application data not found! Please start over with `/apply`.', 
+                ephemeral: true 
+            });
+        }
+        
+        // Check if all 7 questions are answered
+        const answeredCount = appData.answers.filter(a => a && a.trim()).length;
+        if (answeredCount !== 7) {
+            return interaction.reply({ 
+                content: `❌ Please answer all 7 questions! You have ${answeredCount}/7 answered.`, 
+                ephemeral: true 
+            });
+        }
+        
+        // Create application
+        const appId = generateId();
+        const application = {
+            id: appId,
+            userId: interaction.user.id,
+            username: interaction.user.username,
+            avatar: interaction.user.displayAvatarURL({ dynamic: true }),
+            position: appData.position,
+            answers: [...appData.answers],
+            timestamp: Date.now(),
+            guildId: interaction.guild.id
+        };
+        
+        // Save to pending
+        if (!pendingApplications.has(interaction.guild.id)) {
+            pendingApplications.set(interaction.guild.id, []);
+        }
+        pendingApplications.get(interaction.guild.id).push(application);
+        
+        // Clean up
+        userApplications.delete(key);
+        
+        // Update user
+        await interaction.editReply({
+            content: `✅ **Application Submitted Successfully!**\n\n**Position:** ${appData.position}\n**Application ID:** \`${appId}\`\n**Questions:** 7/7\n**Status:** ⏳ Pending Review\n\nYour application has been sent to the staff team for review.`,
+            embeds: [],
+            components: []
+        });
+        
+        // Send to log channel
+        await sendToLog(interaction, application);
+        
+    } catch (error) {
+        console.error('❌ Error in submitApplication:', error);
+        
+        if (interaction.replied || interaction.deferred) {
+            await interaction.editReply({ 
+                content: '❌ **Submission Failed!**\nPlease try again or contact an admin if the issue persists.', 
+                embeds: [], 
+                components: [] 
+            });
+        } else {
+            await interaction.reply({ 
+                content: '❌ **Submission Failed!**\nPlease try again with `/apply`.', 
+                ephemeral: true 
+            });
+        }
+    }
+}
+
+async function sendToLog(interaction, application) {
+    try {
+        const logChannelId = logChannels.get(interaction.guild.id);
+        if (!logChannelId) {
+            console.log('⚠️ No log channel set. Use /set_logs to set one.');
+            return;
+        }
+        
+        const logChannel = interaction.guild.channels.cache.get(logChannelId);
+        if (!logChannel) {
+            console.error('❌ Log channel not found');
+            return;
+        }
+        
+        const data = STAFF_POSITIONS[application.position];
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`📬 New Staff Application - ${application.position}`)
+            .setColor(data.color)
+            .setDescription(`**User:** <@${application.userId}>\n**Username:** ${application.username}\n**Submitted:** <t:${Math.floor(application.timestamp / 1000)}:R>\n**Application ID:** \`${application.id}\``)
+            .setThumbnail(application.avatar);
+        
+        // Add first 3 questions/answers
+        for (let i = 0; i < Math.min(3, data.questions.length); i++) {
+            const answer = application.answers[i] || 'No answer provided';
+            const preview = answer.length > 300 ? answer.substring(0, 300) + '...' : answer;
             embed.addFields({
-                name: `Q${i + 1} Preview`,
+                name: data.questions[i],
                 value: preview,
                 inline: false
             });
         }
-    }
-    
-    const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('submit_application')
-            .setLabel('Submit Application')
-            .setStyle(ButtonStyle.Success)
-            .setEmoji('✅'),
-        new ButtonBuilder()
-            .setCustomId('cancel_application')
-            .setLabel('Cancel')
-            .setStyle(ButtonStyle.Danger)
-            .setEmoji('❌')
-    );
-    
-    await interaction.reply({ 
-        content: '✅ All 7 questions completed!',
-        embeds: [embed], 
-        components: [buttons],
-        ephemeral: true 
-    });
-}
-
-async function submitApplication(interaction) {
-    const key = `${interaction.user.id}_${interaction.guild.id}`;
-    const appData = userApplications.get(key);
-    
-    if (!appData) {
-        return interaction.reply({ 
-            content: '❌ Application data not found!', 
-            ephemeral: true 
+        
+        embed.addFields({
+            name: '📊 Application Info',
+            value: `**Total Questions:** 7/7\n**View Full Application:** Use \`/view_apps\`\n**To review:** Check pending applications`,
+            inline: false
         });
-    }
-    
-    // Check if all 7 questions are answered
-    if (appData.answers.length !== 7 || appData.answers.some(a => !a || a.trim() === '')) {
-        return interaction.reply({ 
-            content: '❌ Please answer all 7 questions!', 
-            ephemeral: true 
+        
+        await logChannel.send({ 
+            content: `<@${OWNER_ID}> **New Application Received!**`,
+            embeds: [embed] 
         });
+        
+        console.log(`📨 Application logged for ${application.username}`);
+    } catch (error) {
+        console.error('❌ Error sending to log:', error);
     }
-    
-    // Create application
-    const appId = generateId();
-    const application = {
-        id: appId,
-        userId: interaction.user.id,
-        username: interaction.user.username,
-        avatar: interaction.user.displayAvatarURL(),
-        position: appData.position,
-        answers: [...appData.answers],
-        timestamp: Date.now(),
-        guildId: interaction.guild.id
-    };
-    
-    // Save to pending
-    if (!pendingApplications.has(interaction.guild.id)) {
-        pendingApplications.set(interaction.guild.id, []);
-    }
-    pendingApplications.get(interaction.guild.id).push(application);
-    
-    // Clean up
-    userApplications.delete(key);
-    
-    // Update user
-    await interaction.update({
-        content: `✅ **Application Submitted!**\n\n**Position:** ${appData.position}\n**ID:** \`${appId}\`\n**Questions:** 7/7\n**Status:** ⏳ Pending Review`,
-        embeds: [],
-        components: []
-    });
-    
-    // Send to log channel
-    await sendToLog(interaction, application);
-}
-
-async function sendToLog(interaction, application) {
-    const logChannelId = logChannels.get(interaction.guild.id);
-    if (!logChannelId) {
-        console.log('⚠️ No log channel set. Use /set_logs to set one.');
-        return;
-    }
-    
-    const logChannel = interaction.guild.channels.cache.get(logChannelId);
-    if (!logChannel) {
-        console.error('❌ Log channel not found');
-        return;
-    }
-    
-    const data = STAFF_POSITIONS[application.position];
-    
-    let content = `**${application.username}'s Application for ${application.position}**\n\n`;
-    
-    // Add all 7 questions and answers
-    data.questions.forEach((question, index) => {
-        const answer = application.answers[index] || 'No answer provided';
-        content += `**${question}**\n`;
-        content += `${answer}\n\n`;
-    });
-    
-    content += '## Submission Stats\n';
-    content += `**User:** <@${application.userId}>\n`;
-    content += `**Username:** ${application.username}\n`;
-    content += `**Submitted:** <t:${Math.floor(application.timestamp / 1000)}:R>\n`;
-    content += `**Position:** ${application.position}\n`;
-    content += `**Questions:** 7/7\n`;
-    content += `**Application ID:** \`${application.id}\``;
-    
-    const embed = new EmbedBuilder()
-        .setDescription(content.substring(0, 4096))
-        .setColor(data.color)
-        .setThumbnail(application.avatar)
-        .setFooter({ text: `Application ID: ${application.id}` });
-    
-    await logChannel.send({ 
-        content: `📬 **New Staff Application (7/7)** - <@${OWNER_ID}>`, 
-        embeds: [embed] 
-    });
 }
 
 // ==================== HELPER FUNCTIONS ====================
@@ -843,15 +1039,6 @@ function getSlotCount(guild, position) {
 function generateId() {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
-
-// ==================== ERROR HANDLING ====================
-process.on('unhandledRejection', (error) => {
-    console.error('⚠️ Unhandled Promise Rejection:', error);
-});
-
-process.on('uncaughtException', (error) => {
-    console.error('⚠️ Uncaught Exception:', error);
-});
 
 // ==================== START BOT ====================
 console.log('🚀 Starting Discord bot...');
