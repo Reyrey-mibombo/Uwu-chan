@@ -1,7 +1,7 @@
 {
   "name": "pic-perms-bot",
   "version": "1.0.0",
-  "description": "Discord bot with healthcheck",
+  "description": "Discord bot for Pic Perms and Staff Applications",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
